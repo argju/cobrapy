@@ -161,6 +161,17 @@ def create_cobra_model_from_sbml_file(sbml_filename, old_sbml=False, legacy_meta
             tmp_formula = tmp_metabolite.name.split('_')[-1]
             tmp_metabolite.name = tmp_metabolite.name[:-len(tmp_formula)-1]
         tmp_metabolite.formula = tmp_formula
+        #hack to extract notation urls (not yet testing that all urls are in "qbiol:is"), TODO replace with XML art
+        annotationstring = sbml_metabolite.getAnnotationString() 
+        if annotationstring == '': #if empty Species annotation check annotation for SpeciecType
+            try:
+                annotationstring = sbml_model.getSpeciesType(sbml_metabolite.getSpeciesType()).annotation_string
+            except AttributeError:
+                pass
+        annotationurls = re.findall('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', annotationstring)
+        removeurls = ['http://biomodels.net/biology-qualifiers/','http://biomodels.net/model-qualifiers/','http://www.w3.org/1999/02/22-rdf-syntax-ns']
+        annotationurls = list(set(annotationurls).difference(removeurls))
+        tmp_metabolite.annotation = annotationurls
         metabolite_dict.update({metabolite_id: tmp_metabolite})
         metabolites.append(tmp_metabolite)
     cobra_model.add_metabolites(metabolites)
@@ -289,8 +300,14 @@ def create_cobra_model_from_sbml_file(sbml_filename, old_sbml=False, legacy_meta
                         gene_id_to_object[tmp_locus_id].name = tmp_row_dict['ABBREVIATION']
 
         if 'SUBSYSTEM' in reaction_note_dict:
-            reaction.subsystem = reaction_note_dict['SUBSYSTEM'][0]   
+            reaction.subsystem = reaction_note_dict['SUBSYSTEM'][0]  
 
+        ## Annotation string 
+        annotationstring = sbml_reaction.annotation_string
+        annotationurls = re.findall('http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', annotationstring)
+        removeurls = ['http://biomodels.net/biology-qualifiers/','http://biomodels.net/model-qualifiers/','http://www.w3.org/1999/02/22-rdf-syntax-ns']
+        annotationurls = list(set(annotationurls).difference(removeurls))
+        reaction.annotation = annotationurls
 
 
     #Now, add all of the reactions to the model.
