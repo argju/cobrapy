@@ -133,6 +133,11 @@ def create_cobra_model_from_sbml_file(sbml_filename, old_sbml=False, legacy_meta
             #Just in case the SBML ids are ill-formed and use -
             tmp_metabolite.id = metabolite_re.split(tmp_metabolite.id)[-1].replace('-','__')
         tmp_metabolite.name = sbml_metabolite.getName()
+        if tmp_metabolite.name == '': #if empty Species name check name for SpeciesType
+            try:
+                tmp_metabolite.name = sbml_model.getSpeciesType(sbml_metabolite.getSpeciesType()).name
+            except AttributeError:
+                pass
         tmp_formula = ''
         tmp_metabolite.notes = parse_legacy_sbml_notes(sbml_metabolite.getNotesString())
         tmp_metabolite.charge = sbml_metabolite.getCharge()
