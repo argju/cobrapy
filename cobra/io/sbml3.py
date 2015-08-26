@@ -259,8 +259,10 @@ def annotate_sbml_from_cobra(sbml_element, cobra_element):
 def parse_xml_into_model(xml, number=float):
     xml_model = xml.find(ns("sbml:model"))
     if get_attrib(xml_model, "fbc:strict") != "true":
+        fbc_strict = False
         warn('loading SBML model without fbc:strict="true"')
-
+    else:
+        fbc_strict = True
     model_id = get_attrib(xml_model, "id")
     model = Model(model_id)
     model.name = xml_model.get("name")
@@ -312,13 +314,23 @@ def parse_xml_into_model(xml, number=float):
         reaction = Reaction(clip(sbml_reaction.get("id"), "R_"))
         reaction.name = sbml_reaction.get("name")
         annotate_cobra_from_sbml(reaction, sbml_reaction)
-        lb_id = get_attrib(sbml_reaction, "fbc:lowerFluxBound", require=True)
-        ub_id = get_attrib(sbml_reaction, "fbc:upperFluxBound", require=True)
-        try:
-            reaction.upper_bound = bounds[ub_id]
-            reaction.lower_bound = bounds[lb_id]
-        except KeyError as e:
-            raise CobraSBMLError("No constant bound with id '%s'" % e.message)
+        
+        if fbc_strict:     
+            lb_id = get_attrib(sbml_reaction, "fbc:lowerFluxBound", require=True)
+            ub_id = get_attrib(sbml_reaction, "fbc:upperFluxBound", require=True)
+            try:
+                reaction.upper_bound = bounds[ub_id]
+                reaction.lower_bound = bounds[lb_id]
+            except KeyError as e:
+                raise CobraSBMLError("No constant bound with id '%s'" % e.message)
+        else:
+            if reaction.reversibility:
+                reaction.upper_bound = 1000
+                reaction.lower_bound = -1000
+            else:
+                reaction.upper_bound = 1000
+                reaction.lower_bound = 0
+
         reactions.append(reaction)
 
         stoichiometry = defaultdict(lambda: 0)
