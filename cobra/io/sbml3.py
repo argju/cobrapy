@@ -324,7 +324,8 @@ def parse_xml_into_model(xml, number=float):
             except KeyError as e:
                 raise CobraSBMLError("No constant bound with id '%s'" % e.message)
         else:
-            if reaction.reversibility:
+            
+            if sbml_reaction.get('reversible')=='true':
                 reaction.upper_bound = 1000
                 reaction.lower_bound = -1000
             else:
