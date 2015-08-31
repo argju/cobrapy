@@ -177,6 +177,15 @@ def create_cobra_model_from_sbml_file(sbml_filename, old_sbml=False, legacy_meta
         removeurls = ['http://biomodels.net/biology-qualifiers/','http://biomodels.net/model-qualifiers/','http://www.w3.org/1999/02/22-rdf-syntax-ns']
         annotationurls = list(set(annotationurls).difference(removeurls))
         tmp_metabolite.annotation = annotationurls
+        keggid = [s[37:] for s in annotationurls if 'kegg.compound' in s] #last part of string http://identifiers.org/kegg.compound/C[0-9]^{5} TODO replace with regex?
+        if len(keggid)==0:
+            keggid=''
+        elif len(keggid)==1:
+            keggid=keggid[0]
+        else:
+            print annotationurls
+            raise Exception("Multiple kegg IDs for metabolite")
+        tmp_metabolite.keggid = keggid
         metabolite_dict.update({metabolite_id: tmp_metabolite})
         metabolites.append(tmp_metabolite)
     cobra_model.add_metabolites(metabolites)

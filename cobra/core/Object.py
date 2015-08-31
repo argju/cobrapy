@@ -14,6 +14,7 @@ class Object(object):
 
         self.notes = {}
         self.annotation = {}
+        self.keggid = {}
 
     def __getstate__(self):
         """To prevent excessive replication during deepcopy."""
