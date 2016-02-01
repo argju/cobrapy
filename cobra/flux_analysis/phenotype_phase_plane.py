@@ -1,5 +1,5 @@
 from numpy import linspace, zeros, array, meshgrid, abs, empty, arange, \
-    int32, unravel_index
+    int32, unravel_index, dtype
 from multiprocessing import Pool
 
 from ..solvers import solver_dict, get_solver_name
@@ -13,9 +13,12 @@ except ImportError:
     axes3d = None
 mlab = None  # mayavi may crash python
 try:  # for prettier colors
-    from brewer2mpl import get_map
-except:
-    get_map = None
+    from palettable.colorbrewer import get_map
+except ImportError:
+    try:
+        from brewer2mpl import get_map
+    except ImportError:
+        get_map = None
 
 
 class phenotypePhasePlaneData:
@@ -52,12 +55,12 @@ class phenotypePhasePlaneData:
     def plot_matplotlib(self, theme="Paired", scale_grid=False):
         """Use matplotlib to plot a phenotype phase plane in 3D.
 
-        theme: color theme to use (requires brewer2mpl)
+        theme: color theme to use (requires palettable)
 
         returns: maptlotlib 3d subplot object"""
         if pyplot is None:
             raise ImportError("Error importing matplotlib 3D plotting")
-        colors = empty(self.growth_rates.shape, dtype="|S7")
+        colors = empty(self.growth_rates.shape, dtype=dtype((str, 7)))
         n_segments = self.segments.max()
         # pick colors
         if get_map is None:
@@ -90,10 +93,11 @@ class phenotypePhasePlaneData:
                           antialiased=False)
         axes.plot_wireframe(xgrid, ygrid, self.growth_rates, color="black",
                             rstride=xgrid_scale, cstride=ygrid_scale)
-        axes.set_xlabel(self.reaction1_name)
-        axes.set_ylabel(self.reaction2_name)
-        axes.set_zlabel("Growth rate")
+        axes.set_xlabel(self.reaction1_name, size="x-large")
+        axes.set_ylabel(self.reaction2_name, size="x-large")
+        axes.set_zlabel("Growth rate", size="x-large")
         axes.view_init(elev=30, azim=-135)
+        figure.tight_layout()
         return axes
 
     def plot_mayavi(self):

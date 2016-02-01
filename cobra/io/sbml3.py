@@ -1,7 +1,6 @@
 from collections import defaultdict
 from warnings import warn, catch_warnings, simplefilter
 from decimal import Decimal
-from math import isinf, isnan
 from ast import parse as ast_parse, Name, Or, And, BoolOp
 from gzip import GzipFile
 from bz2 import BZ2File
@@ -12,6 +11,9 @@ from six import iteritems, string_types
 
 from .. import Metabolite, Reaction, Gene, Model
 from ..core.Gene import parse_gpr
+from ..manipulation.modify import _renames
+from ..manipulation.validate import check_reaction_bounds, \
+    check_metabolite_compartment_formula
 
 try:
     from lxml.etree import parse, Element, SubElement, \
@@ -42,27 +44,6 @@ try:
 except:
     class Basic:
         pass
-
-
-_renames = (
-    (".", "_DOT_"),
-    ("(", "_LPAREN_"),
-    (")", "_RPAREN_"),
-    ("-", "__"),
-    ("[", "_LSQBKT"),
-    ("]", "_RSQBKT"),
-    (",", "_COMMA_"),
-    (":", "_COLON_"),
-    (">", "_GT_"),
-    ("<", "_LT"),
-    ("/", "_FLASH"),
-    ("\\", "_BSLASH"),
-    ("+", "_PLUS_"),
-    ("=", "_EQ_"),
-    (" ", "_SPACE_"),
-    ("'", "_SQUOT_"),
-    ('"', "_DQUOT_"),
-)
 
 
 # deal with namespaces
@@ -129,8 +110,11 @@ class CobraSBMLError(Exception):
 def get_attrib(tag, attribute, type=lambda x: x, require=False):
     value = tag.get(ns(attribute))
     if require and value is None:
-        raise CobraSBMLError("required attribute '%s' not found in tag '%s'" %
-                             (attribute, tag.tag))
+        msg = "required attribute '%s' not found in tag '%s'" % \
+                             (attribute, tag.tag)
+        if tag.get("id") is not None:
+            msg += "with id '%s'" % tag.get("id")
+        raise CobraSBMLError(msg)
     return type(value) if value is not None else None
 
 
@@ -154,7 +138,7 @@ def parse_stream(filename):
         else:
             return parse(filename)
     except ParseError as e:
-        raise CobraSBMLError("Malformed XML file: " + e.message)
+        raise CobraSBMLError("Malformed XML file: " + str(e))
 
 
 # string utility functions
@@ -208,7 +192,7 @@ def annotate_cobra_from_sbml(cobra_element, sbml_element):
             warn("%s does not start with http://identifiers.org/" % uri)
             continue
         try:
-            provider, identifier = uri[23:].split("/")
+            provider, identifier = uri[23:].split("/", 1)
         except ValueError:
             warn("%s does not conform to http://identifiers.org/provider/id"
                  % uri)
@@ -350,6 +334,8 @@ def parse_xml_into_model(xml, number=float):
         object_stoichiometry = {}
         for met_id in stoichiometry:
             if met_id in boundary_metabolites:
+                warn("Boundary metabolite '%s' used in reaction '%s'" %
+                     (met_id, reaction.id))
                 continue
             try:
                 metabolite = model.metabolites.get_by_id(met_id)
@@ -381,7 +367,11 @@ def parse_xml_into_model(xml, number=float):
     obj_query = OBJECTIVES_XPATH % target_objective
     for sbml_objective in obj_list.findall(obj_query):
         rxn_id = clip(get_attrib(sbml_objective, "fbc:reaction"), "R_")
-        model.reactions.get_by_id(rxn_id).objective_coefficient = \
+        try:
+            objective_reaction = model.reactions.get_by_id(rxn_id)
+        except KeyError as e:
+            raise CobraSBMLError("Objective reaction '%s' not found" % rxn_id)
+        objective_reaction.objective_coefficient = \
             get_attrib(sbml_objective, "fbc:coefficient", type=number)
 
     return model
@@ -426,8 +416,13 @@ def model_to_xml(cobra_model, units=True):
     if units:
         param_attr["units"] = "mmol_per_gDW_per_hr"
     # the most common bounds are the minimum, maxmium, and 0
-    min_value = min(cobra_model.reactions.list_attr("lower_bound"))
-    max_value = max(cobra_model.reactions.list_attr("upper_bound"))
+    if len(cobra_model.reactions) > 0:
+        min_value = min(cobra_model.reactions.list_attr("lower_bound"))
+        max_value = max(cobra_model.reactions.list_attr("upper_bound"))
+    else:
+        min_value = -1000
+        max_value = 1000
+
     SubElement(parameter_list, "parameter", value=strnum(min_value),
                id="cobra_default_lb", sboTerm="SBO:0000626", **param_attr)
     SubElement(parameter_list, "parameter", value=strnum(max_value),
@@ -575,7 +570,7 @@ id_required = {ns(i) for i in ("sbml:model", "sbml:reaction:", "sbml:species",
 invalid_id_detector = re.compile("|".join(re.escape(i[0]) for i in _renames))
 
 
-def validate_sbml_model(filename):
+def validate_sbml_model(filename, check_model=True):
     """returns the model along with a list of errors"""
     xmlfile = parse_stream(filename)
     xml = xmlfile.getroot()
@@ -588,6 +583,15 @@ def validate_sbml_model(filename):
 
     def err(err_msg):
         sbml_errors.append(err_msg)
+
+    # make sure there is exactly one model
+    xml_models = xml.findall(ns("sbml:model"))
+    if len(xml_models) > 1:
+        err("More than 1 SBML model detected in file")
+    elif len(xml_models) == 0:
+        err("No SBML model detected in file")
+    else:
+        xml_model = xml_models[0]
 
     # make sure all sbml id's are valid
     all_ids = set()
@@ -615,7 +619,7 @@ def validate_sbml_model(filename):
                     (str_id[e.start:e.end], id_repr))
             if invalid_id_detector.search(str_id):
                 bad_chars = "".join(invalid_id_detector.findall(str_id))
-                err("invalid character%s %s found in %s" %
+                err("invalid character%s '%s' found in %s" %
                     ("s" if len(bad_chars) > 1 else "", bad_chars, id_repr))
             if not str_id[0].isalpha():
                 err("%s does not start with alphabet character" % id_repr)
@@ -624,31 +628,30 @@ def validate_sbml_model(filename):
     for element in xml.findall(".//*[@sboTerm]"):
         sbo_term = element.get("sboTerm")
         if not sbo_term.startswith("SBO:"):
-            warn("sboTerm '%s' does not begin with 'SBO:'" % sbo_term)
+            err("sboTerm '%s' does not begin with 'SBO:'" % sbo_term)
 
     # ensure can be made into model
+    # all warnings generated while loading will be logged as errors
     with catch_warnings(record=True) as warning_list:
         simplefilter("always")
-        model = parse_xml_into_model(xml)
-    sbml_errors.extend(i.message.message for i in warning_list)
+        try:
+            model = parse_xml_into_model(xml)
+        except CobraSBMLError as e:
+            err(str(e))
+            return (None, sbml_errors)
+    sbml_errors.extend(str(i.message) for i in warning_list)
 
-    # ensure exactly one objective
-    if len(model.objective) == 0:
-        sbml_errors.append("no objective reaction identified")
-    elif len(model.objective) > 1:
-        sbml_errors.append("only one reaction should be the objective")
+    # check genes
+    xml_genes = {
+        get_attrib(i, "fbc:id").replace(SBML_DOT, ".")
+        for i in xml_model.iterfind(GENES_XPATH)}
+    for gene in model.genes:
+        if "G_" + gene.id not in xml_genes and gene.id not in xml_genes:
+            err("No gene specfied with id 'G_%s'" % gene.id)
 
-    # make sure there are no infinite bounds
-    if any(isinf(i) or isnan(i)
-           for i in model.reactions.list_attr("lower_bound")):
-        sbml_errors.append("infinite or NaN value detected in lower bounds")
-    if any(isinf(i) or isnan(i)
-           for i in model.reactions.list_attr("upper_bound")):
-        sbml_errors.append("infinite or NaN value detected in upper bounds")
-    for reaction in model.reactions:
-        if reaction.lower_bound > reaction.upper_bound:
-            sbml_errors.append("reaction '%s' has lower bound > upper bound" %
-                               reaction.id)
+    if check_model:
+        sbml_errors.extend(check_reaction_bounds(model))
+        sbml_errors.extend(check_metabolite_compartment_formula(model))
 
     return model, sbml_errors
 
@@ -661,8 +664,9 @@ def write_sbml_model(cobra_model, filename, use_fbc_package=True, **kwargs):
         return
     # create xml
     xml = model_to_xml(cobra_model, **kwargs)
-    write_args = {"encoding": "UTF-8"}
+    write_args = {"encoding": "UTF-8", "xml_declaration": True}
     if _with_lxml:
+        write_args["pretty_print"] = True
         write_args["pretty_print"] = True
     else:
         indent_xml(xml)

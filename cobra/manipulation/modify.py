@@ -5,10 +5,30 @@ from ast import NodeTransformer
 
 from six import iteritems
 
-from .. import Reaction
+from .. import Reaction, Metabolite
 from .delete import get_compiled_gene_reaction_rules
 from ..core.Gene import ast2str
-from ..io.sbml3 import _renames
+
+
+_renames = (
+    (".", "_DOT_"),
+    ("(", "_LPAREN_"),
+    (")", "_RPAREN_"),
+    ("-", "__"),
+    ("[", "_LSQBKT"),
+    ("]", "_RSQBKT"),
+    (",", "_COMMA_"),
+    (":", "_COLON_"),
+    (">", "_GT_"),
+    ("<", "_LT"),
+    ("/", "_FLASH"),
+    ("\\", "_BSLASH"),
+    ("+", "_PLUS_"),
+    ("=", "_EQ_"),
+    (" ", "_SPACE_"),
+    ("'", "_SQUOT_"),
+    ('"', "_DQUOT_"),
+)
 
 
 def _escape_str_id(id_str):
@@ -160,21 +180,23 @@ def convert_to_irreversible(cobra_model):
         # will be constrained to 0) will be left in the model.
         if reaction.lower_bound < 0:
             reverse_reaction = Reaction(reaction.id + "_reverse")
-            reverse_reaction.lower_bound = 0
-            reverse_reaction.upper_bound = reaction.lower_bound * -1
+            reverse_reaction.lower_bound = max(0, -reaction.upper_bound)
+            reverse_reaction.upper_bound = -reaction.lower_bound
             reverse_reaction.objective_coefficient = \
                 reaction.objective_coefficient * -1
-            reaction.lower_bound = 0
+            reaction.lower_bound = max(0, reaction.lower_bound)
+            reaction.upper_bound = max(0, reaction.upper_bound)
             # Make the directions aware of each other
             reaction.notes["reflection"] = reverse_reaction.id
             reverse_reaction.notes["reflection"] = reaction.id
-            reaction_dict = dict([(k, v*-1)
-                                  for k, v in reaction._metabolites.items()])
+            reaction_dict = {k: v * -1
+                             for k, v in iteritems(reaction._metabolites)}
             reverse_reaction.add_metabolites(reaction_dict)
             reverse_reaction._model = reaction._model
             reverse_reaction._genes = reaction._genes
             for gene in reaction._genes:
                 gene._reaction.add(reverse_reaction)
+            reverse_reaction.subsystem = reaction.subsystem
             reverse_reaction._gene_reaction_rule = reaction._gene_reaction_rule
             reactions_to_add.append(reverse_reaction)
     cobra_model.add_reactions(reactions_to_add)
@@ -205,6 +227,8 @@ def revert_to_reversible(cobra_model, update_solution=True):
         forward_id = reverse.notes.pop("reflection")
         forward = cobra_model.reactions.get_by_id(forward_id)
         forward.lower_bound = -reverse.upper_bound
+        if forward.upper_bound == 0:
+            forward.upper_bound = -reverse.lower_bound
 
         # update the solution dict
         if update_solution:
@@ -223,3 +247,75 @@ def revert_to_reversible(cobra_model, update_solution=True):
     if update_solution:
         cobra_model.solution.x_dict = x_dict
         cobra_model.solution.x = [x_dict[r.id] for r in cobra_model.reactions]
+
+
+def canonical_form(model, objective_sense='maximize',
+                   already_irreversible=False, copy=True):
+    """Return a model (problem in canonical_form).
+
+    Converts a minimization problem to a maximization, makes all variables
+    positive by making reactions irreversible, and converts all constraints to
+    <= constraints.
+
+
+    model: class:`~cobra.core.Model`. The model/problem to convert.
+
+    objective_sense: str. The objective sense of the starting problem, either
+    'maximize' or 'minimize'. A minimization problems will be converted to a
+    maximization.
+
+    already_irreversible: bool. If the model is already irreversible, then pass
+    True.
+
+    copy: bool. Copy the model before making any modifications.
+
+    """
+    if copy:
+        model = model.copy()
+
+    if not already_irreversible:
+        convert_to_irreversible(model)
+
+    if objective_sense == "minimize":
+        # if converting min to max, reverse all the objective coefficients
+        for reaction in model.reactions:
+            reaction.objective_coefficient = - reaction.objective_coefficient
+    elif objective_sense != "maximize":
+        raise Exception("Invalid objective sense '%s'. "
+                        "Must be 'minimize' or 'maximize'." % objective_sense)
+
+    # convert G and E constraints to L constraints
+    for metabolite in model.metabolites:
+        if metabolite._constraint_sense == "G":
+            metabolite._constraint_sense = "L"
+            metabolite._bound = - metabolite._bound
+            for reaction in metabolite.reactions:
+                coeff = reaction.get_coefficient(metabolite)
+                # reverse the coefficient
+                reaction.add_metabolites({metabolite: -2 * coeff})
+        elif metabolite._constraint_sense == "E":
+            # change existing constraint to L
+            metabolite._constraint_sense = "L"
+            # add new constraint
+            new_constr = Metabolite("%s__GE_constraint" % metabolite.id)
+            new_constr._constraint_sense = "L"
+            new_constr._bound = - metabolite._bound
+            for reaction in metabolite.reactions:
+                coeff = reaction.get_coefficient(metabolite)
+                reaction.add_metabolites({new_constr: -coeff})
+
+    # convert lower bounds to LE constraints
+    for reaction in model.reactions:
+        if reaction.lower_bound < 0:
+            raise Exception("Bounds of irreversible reactions should be >= 0,"
+                            " for %s" % reaction.id)
+        elif reaction.lower_bound == 0:
+            continue
+        # new constraint for lower bound
+        lb_constr = Metabolite("%s__LB_constraint" % reaction.id)
+        lb_constr._constraint_sense = "L"
+        lb_constr._bound = - reaction.lower_bound
+        reaction.add_metabolites({lb_constr: -1})
+        reaction.lower_bound = 0
+
+    return model

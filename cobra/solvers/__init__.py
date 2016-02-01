@@ -77,14 +77,16 @@ def get_solver_name(mip=False, qp=False):
     if len(solver_dict) == 0:
         raise SolverNotFound("no solvers installed")
     # glpk only does lp, not qp. Gurobi and cplex are better at mip
-    mip_order = ["gurobi", "cplex", "coin", "cglpk", "glpk"]
-    lp_order = ["cglpk", "cplex",  "glpk", "gurobi", "coin"]
-    qp_order = ["gurobi", "cplex"]
+    mip_order = ["gurobi", "cplex", "mosek", "coin", "cglpk", "glpk"]
+    lp_order = ["cglpk", "cplex",  "gurobi", "mosek", "coin", "glpk"]
+    qp_order = ["gurobi", "cplex", "mosek"]
 
     if mip is False and qp is False:
         for solver_name in lp_order:
             if solver_name in solver_dict:
                 return solver_name
+        # none of them are in the list order - so return the first one
+        return list(solver_dict)[0]
     elif qp:  # mip does not yet matter for this determination
         for solver_name in qp_order:
             if solver_name in solver_dict:

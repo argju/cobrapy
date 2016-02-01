@@ -74,7 +74,7 @@ def load_matlab_model(infile_path, variable_name=None):
     raise Exception("no COBRA model found")
 
 
-def save_matlab_model(model, file_name):
+def save_matlab_model(model, file_name, varname=None):
     """Save the cobra model as a .mat file.
 
     This .mat file can be used directly in the MATLAB version of COBRA.
@@ -84,8 +84,12 @@ def save_matlab_model(model, file_name):
     file_name : str or file-like object
 
     """
+    if varname is None:
+        varname = str(model.id) \
+            if model.id is not None and len(model.id) > 0 \
+            else "exported_model"
     mat = create_mat_dict(model)
-    savemat(file_name, {str(model.id): mat},
+    savemat(file_name, {varname: mat},
             appendmat=True, oned_as="column")
 
 
@@ -98,13 +102,18 @@ def create_mat_dict(model):
     mat["mets"] = _cell(mets.list_attr("id"))
     mat["metNames"] = _cell(mets.list_attr("name"))
     mat["metFormulas"] = _cell([str(m.formula) for m in mets])
+    try:
+        mat["metCharge"] = array(mets.list_attr("charge")) * 1.
+    except TypeError:
+        # can't have any None entries for charge, or this will fail
+        pass
     mat["genes"] = _cell(model.genes.list_attr("id"))
     mat["grRules"] = _cell(rxns.list_attr("gene_reaction_rule"))
     mat["rxns"] = _cell(rxns.list_attr("id"))
     mat["rxnNames"] = _cell(rxns.list_attr("name"))
     mat["subSystems"] = _cell(rxns.list_attr("subsystem"))
     mat["csense"] = "".join(model._constraint_sense)
-    mat["S"] = model.S
+    mat["S"] = model.S if model.S is not None else [[]]
     # multiply by 1 to convert to float, working around scipy bug
     # https://github.com/scipy/scipy/issues/4537
     mat["lb"] = array(rxns.list_attr("lower_bound")) * 1.
@@ -149,6 +158,13 @@ def from_mat_struct(mat_struct, model_id=None):
             pass
         try:
             new_metabolite.formula = str(m["metFormulas"][0][0][i][0][0])
+        except (IndexError, ValueError):
+            pass
+        try:
+            new_metabolite.charge = float(m["metCharge"][0, 0][i][0])
+            int_charge = int(new_metabolite.charge)
+            if new_metabolite.charge == int_charge:
+                new_metabolite.charge = int_charge
         except (IndexError, ValueError):
             pass
         model.add_metabolites([new_metabolite])

@@ -28,6 +28,15 @@ class Frozendict(dict):
         raise NotImplementedError("read-only")
 
 
+def _is_positive(n):
+    try:
+        if n >= 0:
+            return True
+        else:
+            return False
+    except:
+        return True
+
 # precompiled regular expressions
 # Matches and/or in a gene reaction rule
 and_or_search = re.compile(r'\(| and| or|\+|\)', re.IGNORECASE)
@@ -47,26 +56,27 @@ class Reaction(Object):
 
     """
 
-    def __init__(self, name=None):
+    def __init__(self, id=None, name='', subsystem='', lower_bound=0.,
+                 upper_bound=1000., objective_coefficient=0.):
         """An object for housing reactions and associated information
         for cobra modeling.
 
         """
-        Object.__init__(self, name)
+        Object.__init__(self, id, name)
         self._gene_reaction_rule = ''
-        self.subsystem = ''
+        self.subsystem = subsystem
         # The cobra.Genes that are used to catalyze the reaction
         self._genes = set()
         # A dictionary of metabolites and their stoichiometric coefficients in
         # this reaction.
         self._metabolites = {}
-        self.name = name
         # self.model is None or refers to the cobra.Model that
         # contains self
         self._model = None
 
-        self.objective_coefficient = self.lower_bound = 0.
-        self.upper_bound = 1000.
+        self.objective_coefficient = objective_coefficient
+        self.upper_bound = upper_bound
+        self.lower_bound = lower_bound
         # Used during optimization.  Indicates whether the
         # variable is modeled as continuous, integer, binary, semicontinous, or
         # semiinteger.
@@ -393,12 +403,12 @@ class Reaction(Object):
     @property
     def reactants(self):
         """Return a list of reactants for the reaction."""
-        return [k for k, v in self._metabolites.items() if v < 0]
+        return [k for k, v in self._metabolites.items() if not _is_positive(v)]
 
     @property
     def products(self):
         """Return a list of products for the reaction"""
-        return [k for k, v in self._metabolites.items() if v > 0]
+        return [k for k, v in self._metabolites.items() if _is_positive(v)]
 
     def get_coefficient(self, metabolite_id):
         """Return the stoichiometric coefficient for a metabolite in
@@ -516,7 +526,7 @@ class Reaction(Object):
         product_bits = []
         for the_metabolite, coefficient in iteritems(self._metabolites):
             name = str(getattr(the_metabolite, id_type))
-            if coefficient > 0:
+            if _is_positive(coefficient):
                 product_bits.append(format(coefficient) + name)
             else:
                 reactant_bits.append(format(abs(coefficient)) + name)

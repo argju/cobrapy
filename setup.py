@@ -102,15 +102,19 @@ try:
         library_dirs.append(abspath("."))
     if isfile("glpk.h"):
         include_dirs.append(abspath("."))
-    if name == "posix":
+    # if the glpk files are not in the current directory attempt to
+    # auto-detect their location by finding the location of the glpsol
+    # command
+    if name == "posix" and len(include_dirs) == 0 and len(library_dirs) == 0:
         from subprocess import check_output
         try:
-            glpksol_path = check_output(["which", "glpsol"]).strip()
+            glpksol_path = check_output(["which", "glpsol"],
+                                        universal_newlines=True).strip()
             glpk_path = abspath(join(dirname(glpksol_path), ".."))
             include_dirs.append(join(glpk_path, "include"))
             library_dirs.append(join(glpk_path, "lib"))
-        except:
-            None
+        except Exception as e:
+            print('Could not autodetect include and library dirs: ' + str(e))
     if len(include_dirs) > 0:
         build_args["include_dirs"] = include_dirs
     if len(library_dirs) > 0:
@@ -124,14 +128,15 @@ try:
     else:
         ext_modules = [Extension("cobra.solvers.cglpk",
                                  ["cobra/solvers/cglpk.c"], **build_args)]
-except:
+except Exception as e:
+    print('Could not build CGLPK: {}'.format(e))
     ext_modules = None
 
 extras = {
     'matlab': ["pymatbridge"],
     'sbml': ["python-libsbml", "lxml"],
     'array': ["numpy>=1.6", "scipy>=11.0"],
-    'display': ["matplotlib", "brewer2mpl", "pandas"]
+    'display': ["matplotlib", "palettable", "pandas"]
 }
 
 all_extras = {'Cython>=0.21'}
@@ -175,7 +180,7 @@ setup(
 
     author="Daniel Robert Hyduke <danielhyduke@gmail.com>, "
     "Ali Ebrahim <aebrahim@ucsd.edu>",
-    author_email="danielhyduke@gmail.com",
+    author_email="aebrahim@ucsd.edu",
     description="COBRApy is a package for constraints-based modeling of "
     "biological networks",
     license="LGPL/GPL v2+",
@@ -195,6 +200,7 @@ setup(
         'Operating System :: OS Independent',
         'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3.4',
+        'Programming Language :: Python :: 3.5',
         'Programming Language :: Cython',
         'Programming Language :: Python :: Implementation :: CPython',
         'Topic :: Scientific/Engineering',
